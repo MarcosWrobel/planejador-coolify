@@ -1,0 +1,1570 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planejador de Aulas com IA (Firestore + Google Auth)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        .sidebar-item {
+            transition: background-color 0.3s ease;
+        }
+        .sidebar-item:hover, .sidebar-item.active {
+            background-color: #2563eb; /* bg-blue-700 */
+            color: white;
+        }
+        .modal {
+            display: none; position: fixed; z-index: 100;
+            left: 0; top: 0; width: 100%; height: 100%;
+            overflow: auto; background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: #fefefe; margin: 10% auto; padding: 20px;
+            border: 1px solid #888; width: 80%; max-width: 600px; border-radius: 8px;
+        }
+        .close-button {
+            color: #aaa; float: right; font-size: 28px; font-weight: bold;
+        }
+        .close-button:hover, .close-button:focus {
+            color: black; text-decoration: none; cursor: pointer;
+        }
+        .loader {
+            border: 4px solid #f3f3f3; border-top: 4px solid #3498db; /* Blue */
+            border-radius: 50%; width: 24px; height: 24px;
+            animation: spin 1s linear infinite; display: inline-block; margin-left: 8px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .hidden { display: none; }
+        .toast {
+            position: fixed; bottom: 20px; left: 50%;
+            transform: translateX(-50%); background-color: #333; color: white;
+            padding: 10px 20px; border-radius: 5px; z-index: 1000;
+            opacity: 0; transition: opacity 0.5s ease-in-out;
+        }
+        .toast.show { opacity: 1; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+    <div id="toast-message" class="toast"></div>
+
+    <div class="flex h-screen">
+        <aside class="w-64 bg-blue-600 text-white p-6 space-y-4 fixed h-full overflow-y-auto">
+            <h1 class="text-2xl font-bold mb-6">Planejador IA</h1>
+            
+            <div class="mb-4 p-2 bg-blue-700 rounded text-xs">
+                Status: <span id="authStatus">A verificar...</span><br>
+                Utilizador: <span id="userNameDisplay">Ninguém</span><br>
+                User ID: <span id="userIdDisplay">N/A</span>
+            </div>
+            <button id="loginGoogleBtn" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded mb-2">
+                <i class="fab fa-google mr-2"></i>Login com Google
+            </button>
+            <button id="logoutBtn" class="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded hidden">
+                <i class="fas fa-sign-out-alt mr-2"></i>Logout
+            </button>
+
+            <nav class="mt-4">
+                <a href="#" data-target="dashboard" class="sidebar-item block py-2.5 px-4 rounded active"><i class="fas fa-tachometer-alt mr-2"></i>Dashboard</a>
+                <div class="sidebar-item py-2.5 px-4 rounded cursor-pointer" id="toggleCurriculo">
+                    <i class="fas fa-book mr-2"></i>Currículo/Diretrizes <i class="fas fa-chevron-down float-right mt-1"></i>
+                </div>
+                <div id="submenuCurriculo" class="hidden ml-4 space-y-2 mt-2">
+                    <a href="#" data-target="disciplinas" class="sidebar-item block py-2 px-4 rounded">Disciplinas</a>
+                    <a href="#" data-target="anosSeries" class="sidebar-item block py-2 px-4 rounded">Anos/Séries</a>
+                    <a href="#" data-target="conteudosProg" class="sidebar-item block py-2 px-4 rounded">Conteúdos</a>
+                    <a href="#" data-target="habilidades" class="sidebar-item block py-2 px-4 rounded">Habilidades (BNCC)</a>
+                </div>
+                <div class="sidebar-item py-2.5 px-4 rounded cursor-pointer" id="togglePlanejamentos">
+                    <i class="fas fa-calendar-alt mr-2"></i>Planejamentos <i class="fas fa-chevron-down float-right mt-1"></i>
+                </div>
+                 <div id="submenuPlanejamentos" class="hidden ml-4 space-y-2 mt-2">
+                    <a href="#" data-target="novoPlanejamento" class="sidebar-item block py-2 px-4 rounded">Novo Planejamento</a>
+                    <a href="#" data-target="meusPlanejamentos" class="sidebar-item block py-2 px-4 rounded">Meus Planejamentos</a>
+                </div>
+                <a href="#" data-target="bancoAtividades" class="sidebar-item block py-2.5 px-4 rounded"><i class="fas fa-archive mr-2"></i>Banco de Atividades</a>
+                <a href="#" data-target="configuracoes" class="sidebar-item block py-2.5 px-4 rounded"><i class="fas fa-cog mr-2"></i>Configurações</a>
+            </nav>
+        </aside>
+
+        <main class="flex-1 ml-64 p-8 overflow-y-auto">
+            <section id="dashboard" class="content-section">
+                <h2 class="text-3xl font-semibold text-gray-800 mb-6">Dashboard</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div class="bg-white p-6 rounded-lg shadow hover:shadow-lg transition-shadow">
+                        <h3 class="text-xl font-semibold text-blue-600 mb-2">Criar Novo Planejamento</h3>
+                        <p class="text-gray-600 mb-4">Comece a planear a sua próxima aula incrível.</p>
+                        <button data-target-nav="novoPlanejamento" class="nav-button bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                            Iniciar <i class="fas fa-arrow-right ml-2"></i>
+                        </button>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow hover:shadow-lg transition-shadow">
+                        <h3 class="text-xl font-semibold text-green-600 mb-2">Meus Planejamentos</h3>
+                        <p class="text-gray-600 mb-4">Aceda e gira os seus planos de aula guardados.</p>
+                        <button data-target-nav="meusPlanejamentos" class="nav-button bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
+                            Ver Todos <i class="fas fa-list-alt ml-2"></i>
+                        </button>
+                    </div>
+                     <div class="bg-white p-6 rounded-lg shadow hover:shadow-lg transition-shadow">
+                        <h3 class="text-xl font-semibold text-purple-600 mb-2">Banco de Atividades</h3>
+                        <p class="text-gray-600 mb-4">Explore e utilize atividades prontas.</p>
+                        <button data-target-nav="bancoAtividades" class="nav-button bg-purple-500 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded">
+                            Aceder ao Banco <i class="fas fa-search ml-2"></i>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="disciplinas" class="content-section hidden">
+                <h2 class="text-3xl font-semibold text-gray-800 mb-6">Disciplinas</h2>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <input type="text" id="inputNovaDisciplina" placeholder="Nome da nova disciplina" class="border p-2 rounded w-full mb-4 md:w-1/2">
+                    <button id="btnAdicionarDisciplina" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-4">
+                        <i class="fas fa-plus mr-2"></i>Adicionar Disciplina
+                    </button>
+                    <ul id="disciplinasLista" class="list-disc pl-5 space-y-2"></ul>
+                </div>
+            </section>
+            
+            <section id="anosSeries" class="content-section hidden">
+                <h2 class="text-3xl font-semibold text-gray-800 mb-6">Anos/Séries</h2>
+                 <div class="bg-white p-6 rounded-lg shadow">
+                    <input type="text" id="inputNovoAnoSerie" placeholder="Ex: 6º Ano EF, 1ª Série EM" class="border p-2 rounded w-full mb-4 md:w-1/2">
+                    <button id="btnAdicionarAnoSerie" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-4">
+                        <i class="fas fa-plus mr-2"></i>Adicionar Ano/Série
+                    </button>
+                    <ul id="anosSeriesLista" class="list-disc pl-5 space-y-2"></ul>
+                </div>
+            </section>
+
+            <section id="conteudosProg" class="content-section hidden">
+                <h2 class="text-3xl font-semibold text-gray-800 mb-6">Conteúdos Programáticos</h2>
+                 <div class="bg-white p-6 rounded-lg shadow">
+                    <div class="mb-4">
+                        <label for="filtroDisciplinaConteudo" class="block text-sm font-medium text-gray-700">Filtrar por Disciplina:</label>
+                        <select id="filtroDisciplinaConteudo" class="mt-1 block w-full md:w-1/2 p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"></select>
+                    </div>
+                    <input type="text" id="inputNovoConteudo" placeholder="Nome do novo conteúdo" class="border p-2 rounded w-full mb-2 md:w-1/2">
+                    <textarea id="inputDescConteudo" placeholder="Descrição breve do conteúdo (opcional)" class="border p-2 rounded w-full mb-4 md:w-1/2 h-20"></textarea>
+                    <button id="btnAdicionarConteudo" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-4">
+                        <i class="fas fa-plus mr-2"></i>Adicionar Conteúdo
+                    </button>
+                    <ul id="conteudosLista" class="list-disc pl-5 space-y-2"></ul>
+                </div>
+            </section>
+
+            <section id="habilidades" class="content-section hidden">
+                <h2 class="text-3xl font-semibold text-gray-800 mb-6">Habilidades (BNCC)</h2>
+                 <div class="bg-white p-6 rounded-lg shadow">
+                    <input type="text" id="inputCodigoHabilidade" placeholder="Código da Habilidade (Ex: EF08HI04)" class="border p-2 rounded w-full mb-2 md:w-1/2">
+                    <textarea id="inputDescHabilidade" placeholder="Descrição da habilidade" class="border p-2 rounded w-full mb-4 md:w-1/2 h-20"></textarea>
+                    <button id="btnAdicionarHabilidade" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-4">
+                        <i class="fas fa-plus mr-2"></i>Adicionar Habilidade
+                    </button>
+                    <ul id="habilidadesLista" class="list-disc pl-5 space-y-2"></ul>
+                </div>
+            </section>
+
+            <section id="novoPlanejamento" class="content-section hidden">
+                <input type="hidden" id="currentPlanningId">
+                <h2 class="text-3xl font-semibold text-gray-800 mb-6">Novo Planejamento de Aula</h2>
+                <div class="bg-white p-6 rounded-lg shadow space-y-6">
+                    <div class="border-b pb-4">
+                        <h3 class="text-xl font-semibold text-gray-700 mb-3">1. Identificação</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="planoTitulo" class="block text-sm font-medium text-gray-700">Título do Plano:</label>
+                                <input type="text" id="planoTitulo" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                            </div>
+                            <div>
+                                <label for="planoDisciplina" class="block text-sm font-medium text-gray-700">Disciplina:</label>
+                                <select id="planoDisciplina" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm"></select>
+                            </div>
+                            <div>
+                                <label for="planoAnoSerie" class="block text-sm font-medium text-gray-700">Ano/Série:</label>
+                                <select id="planoAnoSerie" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm"></select>
+                            </div>
+                            <div>
+                                <label for="planoDuracao" class="block text-sm font-medium text-gray-700">Duração Estimada:</label>
+                                <input type="text" id="planoDuracao" placeholder="Ex: 2 aulas, 1h40min" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-b pb-4">
+                        <h3 class="text-xl font-semibold text-gray-700 mb-3">2. Conteúdos e Objetivos</h3>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700">Conteúdos a Serem Trabalhados:</label>
+                            <div id="planoConteudosContainer" class="space-y-2 mt-1"></div>
+                            <button id="btnAdicionarCampoConteudoPlano" class="mt-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-1 px-3 rounded">
+                                <i class="fas fa-plus mr-1"></i> Adicionar Conteúdo Manualmente
+                            </button>
+                            <button id="btnSugerirConteudosIA" class="mt-2 text-sm bg-yellow-400 hover:bg-yellow-500 text-gray-800 font-semibold py-1 px-3 rounded">
+                                <i class="fas fa-lightbulb mr-1"></i> Sugerir Conteúdos com IA ✨ <span id="loaderConteudos" class="loader hidden"></span>
+                            </button>
+                        </div>
+                        <div class="mt-4">
+                            <label for="planoObjetivos" class="block text-sm font-medium text-gray-700">Objetivos de Aprendizagem:</label>
+                            <textarea id="planoObjetivos" rows="3" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm"></textarea>
+                            <button id="btnSugerirObjetivosIA" class="mt-2 text-sm bg-yellow-400 hover:bg-yellow-500 text-gray-800 font-semibold py-1 px-3 rounded">
+                                <i class="fas fa-lightbulb mr-1"></i> Sugerir Objetivos com IA ✨ <span id="loaderObjetivos" class="loader hidden"></span>
+                            </button>
+                        </div>
+                         <div class="mt-4">
+                            <label for="planoHabilidades" class="block text-sm font-medium text-gray-700">Habilidades (BNCC) Relacionadas:</label>
+                            <select id="planoHabilidades" multiple class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm h-24"></select>
+                        </div>
+                    </div>
+
+                    <div class="border-b pb-4">
+                        <h3 class="text-xl font-semibold text-gray-700 mb-3">3. Metodologia / Desenvolvimento da Aula</h3>
+                        <textarea id="planoMetodologia" rows="5" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" placeholder="Descreva os passos da aula: introdução, desenvolvimento, atividades, conclusão..."></textarea>
+                        <button id="btnSugerirMetodologiaIA" class="mt-2 text-sm bg-yellow-400 hover:bg-yellow-500 text-gray-800 font-semibold py-1 px-3 rounded">
+                            <i class="fas fa-lightbulb mr-1"></i> Sugerir Estrutura com IA ✨ <span id="loaderMetodologia" class="loader hidden"></span>
+                        </button>
+                    </div>
+                    
+                    <div class="border-b pb-4">
+                        <h3 class="text-xl font-semibold text-gray-700 mb-3">4. Conteúdo Teórico Detalhado</h3>
+                        <div id="planoConteudoTeoricoContainer" class="space-y-4">
+                            <p class="text-sm text-gray-500">Clique em "Gerar Texto Explicativo com IA ✨" ao lado de cada conteúdo na Seção 2 para popular esta área.</p>
+                        </div>
+                    </div>
+
+                    <div class="border-b pb-4">
+                        <h3 class="text-xl font-semibold text-gray-700 mb-3">5. Atividades</h3>
+                        <div id="planoAtividadesContainer" class="space-y-4 mb-3"></div>
+                        <button id="btnAbrirModalGerarAtividades" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded">
+                            <i class="fas fa-cogs mr-1"></i> Gerar Atividades com IA ✨
+                        </button>
+                        <button id="btnAdicionarAtividadeManualPlano" class="ml-2 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-2 px-4 rounded">
+                            <i class="fas fa-plus mr-1"></i> Adicionar Manualmente
+                        </button>
+                         <button id="btnAbrirModalBancoAtividades" class="ml-2 bg-purple-500 hover:bg-purple-600 text-white font-semibold py-2 px-4 rounded">
+                            <i class="fas fa-archive mr-1"></i> Usar do Banco de Atividades
+                        </button>
+                    </div>
+
+                     <div class="border-b pb-4">
+                        <h3 class="text-xl font-semibold text-gray-700 mb-3">6. Recursos e Materiais</h3>
+                        <textarea id="planoRecursos" rows="3" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" placeholder="Liste livros, sites, vídeos, softwares, etc."></textarea>
+                        <button id="btnSugerirRecursosIA" class="mt-2 text-sm bg-yellow-400 hover:bg-yellow-500 text-gray-800 font-semibold py-1 px-3 rounded">
+                            <i class="fas fa-lightbulb mr-1"></i> Sugerir Recursos com IA ✨ <span id="loaderRecursos" class="loader hidden"></span>
+                        </button>
+                    </div>
+
+                    <div>
+                        <h3 class="text-xl font-semibold text-gray-700 mb-3">7. Avaliação</h3>
+                        <textarea id="planoAvaliacao" rows="3" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" placeholder="Como o aprendizado será verificado?"></textarea>
+                        <button id="btnSugerirAvaliacaoIA" class="mt-2 text-sm bg-yellow-400 hover:bg-yellow-500 text-gray-800 font-semibold py-1 px-3 rounded">
+                           <i class="fas fa-lightbulb mr-1"></i> Sugerir Métodos com IA ✨ <span id="loaderAvaliacao" class="loader hidden"></span>
+                        </button>
+                    </div>
+                    
+                    <div class="pt-6 border-t mt-6 flex justify-end space-x-3">
+                        <button id="btnSalvarRascunho" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
+                            Guardar como Rascunho
+                        </button>
+                        <button id="btnSalvarPlanejamento" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                            Guardar Planejamento
+                        </button>
+                         <button id="btnExportarTexto" class="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded">
+                            <i class="fas fa-file-export mr-2"></i>Exportar para Texto
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="meusPlanejamentos" class="content-section hidden">
+                <h2 class="text-3xl font-semibold text-gray-800 mb-6">Meus Planejamentos</h2>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <div id="listaMeusPlanejamentos" class="space-y-3"></div>
+                </div>
+            </section>
+
+            <section id="bancoAtividades" class="content-section hidden">
+                <h2 class="text-3xl font-semibold text-gray-800 mb-6">Banco de Atividades</h2>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <p class="text-gray-600 mb-4">Atividades guardadas para reutilização. Pode adicionar atividades aqui diretamente ou ao guardar um planejamento.</p>
+                    <div id="listaBancoAtividades" class="space-y-3"></div>
+                </div>
+            </section>
+
+            <section id="configuracoes" class="content-section hidden">
+                <h2 class="text-3xl font-semibold text-gray-800 mb-6">Configurações</h2>
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <p class="text-gray-700">Chave da API Gemini (Opcional):</p>
+                    <input type="text" id="apiKeyInput" placeholder="Cole a sua chave da API aqui se desejar usar o seu próprio limite" class="border p-2 rounded w-full md:w-1/2 mt-1 mb-3">
+                    <p class="text-sm text-gray-500">Deixe em branco para usar a API padrão (pode ter limites de uso mais restritos).</p>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <div id="modalGerarAtividades" class="modal">
+        <div class="modal-content">
+            <span id="closeModalGerarAtividades" class="close-button">&times;</span>
+            <h3 class="text-xl font-semibold mb-4">Gerar Atividades com IA ✨</h3>
+            <div class="mb-4">
+                <label for="modalAtividadeConteudo" class="block text-sm font-medium text-gray-700">Para qual(is) conteúdo(s) do plano?</label>
+                <select id="modalAtividadeConteudo" multiple class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm h-24"></select>
+            </div>
+            <div class="mb-4">
+                <label for="modalTipoAtividade" class="block text-sm font-medium text-gray-700">Tipo de Atividade:</label>
+                <select id="modalTipoAtividade" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                    <option value="multipla_escolha">Múltipla Escolha (com gabarito)</option>
+                    <option value="dissertativa">Dissertativa</option>
+                    <option value="verdadeiro_falso">Verdadeiro ou Falso (com justificação)</option>
+                    <option value="pratica">Prática / Projeto Simples</option>
+                    <option value="estudo_caso">Estudo de Caso Curto</option>
+                </select>
+            </div>
+            <div class="mb-4">
+                <label for="modalNumAtividades" class="block text-sm font-medium text-gray-700">Número de Atividades:</label>
+                <input type="number" id="modalNumAtividades" value="3" min="1" max="10" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
+            </div>
+            <div class="mb-4">
+                <label for="modalNivelDificuldade" class="block text-sm font-medium text-gray-700">Nível de Dificuldade:</label>
+                <select id="modalNivelDificuldade" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
+                    <option value="basico">Básico</option>
+                    <option value="intermediario">Intermediário</option>
+                    <option value="avancado">Avançado</option>
+                </select>
+            </div>
+            <div class="mb-4">
+                <label for="modalInstrucoesAdicionais" class="block text-sm font-medium text-gray-700">Instruções Adicionais para IA (opcional):</label>
+                <textarea id="modalInstrucoesAdicionais" rows="2" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm" placeholder="Ex: Foque em análise crítica, use exemplos práticos..."></textarea>
+            </div>
+            <div class="mb-3">
+                <label for="modalGuardarNoBanco" class="inline-flex items-center">
+                    <input type="checkbox" id="modalGuardarNoBanco" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
+                    <span class="ml-2 text-sm text-gray-600">Guardar atividades geradas no Banco de Atividades?</span>
+                </label>
+            </div>
+            <button id="btnProcessarGeracaoAtividadesIA" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded">
+                Gerar Atividades <span id="loaderModalAtividades" class="loader hidden"></span>
+            </button>
+        </div>
+    </div>
+
+    <div id="modalBancoParaPlano" class="modal">
+        <div class="modal-content">
+            <span id="closeModalBancoParaPlano" class="close-button">&times;</span>
+            <h3 class="text-xl font-semibold mb-4">Usar Atividades do Banco ✨</h3>
+            <div id="conteudoModalBancoAtividades" class="max-h-96 overflow-y-auto">
+                <p>A carregar atividades do banco...</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            onAuthStateChanged,
+            GoogleAuthProvider,    
+            signInWithPopup,       
+            signOut                
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, doc, getDoc, setDoc, addDoc, updateDoc, deleteDoc, 
+            onSnapshot, collection, query, where, getDocs, Timestamp, serverTimestamp, orderBy
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Configurações Globais e Firebase ---
+        // UTILIZADOR: COLE AQUI A CONFIGURAÇÃO DO SEU PROJETO FIREBASE:
+        const firebaseConfig = {
+            apiKey: "AIzaSyCYWeyg-4EYOiIuoI9ah5Ge4OgLCSFxcnQ", // Substitua pela sua chave
+            authDomain: "plano-de-aula-constructor.firebaseapp.com", // Substitua pelo seu
+            projectId: "plano-de-aula-constructor", // Substitua pelo seu
+            storageBucket: "plano-de-aula-constructor.appspot.com", // Substitua pelo seu
+            messagingSenderId: "821873355049", // Substitua pelo seu
+            appId: "1:821873355049:web:25a01850cd1da6bfe56f38", // Substitua pelo seu
+            measurementId: "G-HXT1HPX975" // Opcional, substitua se tiver
+        };
+        const appId = firebaseConfig.appId || 'default-app-id-local';
+
+        let fbApp;
+        let fbAuth;
+        let fbDb;
+        let currentUserId = null;
+        let unsubscribeListeners = [];
+
+        let localDb = {
+            disciplinas: [], anosSeries: [], conteudos: [], 
+            habilidades: [], bancoAtividadesGlobal: []
+        };
+        
+        const loginGoogleBtn = document.getElementById('loginGoogleBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const authStatusSpan = document.getElementById('authStatus');
+        const userNameDisplaySpan = document.getElementById('userNameDisplay');
+        const userIdDisplaySpan = document.getElementById('userIdDisplay');
+
+        async function initFirebase() {
+            if (!firebaseConfig || !firebaseConfig.apiKey) {
+                console.error("Configuração do Firebase não encontrada ou incompleta!");
+                authStatusSpan.textContent = "Erro: Config. Firebase em falta.";
+                showToast("Erro: Configuração do Firebase em falta.", "error");
+                return;
+            }
+
+            try {
+                fbApp = initializeApp(firebaseConfig);
+                fbAuth = getAuth(fbApp);
+                fbDb = getFirestore(fbApp);
+
+                onAuthStateChanged(fbAuth, async (user) => {
+                    if (user) { 
+                        currentUserId = user.uid;
+                        authStatusSpan.textContent = "Online";
+                        userNameDisplaySpan.textContent = user.displayName || user.email || "Utilizador";
+                        userIdDisplaySpan.textContent = currentUserId.substring(0, 8) + "...";
+                        loginGoogleBtn.classList.add('hidden');
+                        logoutBtn.classList.remove('hidden');
+                        
+                        console.log("Utilizador autenticado:", currentUserId, user.displayName);
+                        loadInitialData();
+                        showToast(`Bem-vindo, ${user.displayName || 'utilizador'}!`, "success");
+                    } else { 
+                        currentUserId = null;
+                        authStatusSpan.textContent = "Offline";
+                        userNameDisplaySpan.textContent = "Ninguém";
+                        userIdDisplaySpan.textContent = "N/A";
+                        loginGoogleBtn.classList.remove('hidden');
+                        logoutBtn.classList.add('hidden');
+                        
+                        console.log("Nenhum utilizador autenticado.");
+                        clearAllLocalDataAndUI(); 
+                        showToast("É necessário fazer login para aceder aos dados.", "info");
+                    }
+                });
+            } catch (error) {
+                console.error("Erro ao inicializar o Firebase:", error);
+                authStatusSpan.textContent = "Erro na inicialização do Firebase.";
+                showToast("Erro ao inicializar o Firebase.", "error");
+            }
+        }
+        
+        async function signInWithGoogle() {
+            if (!fbAuth) {
+                showToast("Firebase Auth não inicializado.", "error");
+                return;
+            }
+            const provider = new GoogleAuthProvider();
+            try {
+                await signInWithPopup(fbAuth, provider);
+            } catch (error) {
+                console.error("Erro no login com Google:", error);
+                showToast(`Erro no login: ${error.message}`, "error");
+            }
+        }
+
+        async function signOutUser() {
+            if (!fbAuth) {
+                showToast("Firebase Auth não inicializado.", "error");
+                return;
+            }
+            try {
+                await signOut(fbAuth);
+            } catch (error) {
+                console.error("Erro no logout:", error);
+                showToast(`Erro no logout: ${error.message}`, "error");
+            }
+        }
+        
+        function clearAllLocalDataAndUI() {
+            localDb = { disciplinas: [], anosSeries: [], conteudos: [], habilidades: [], bancoAtividadesGlobal: [] };
+            unsubscribeListeners.forEach(unsub => unsub());
+            unsubscribeListeners = [];
+
+            const listIds = ['disciplinasLista', 'anosSeriesLista', 'conteudosLista', 'habilidadesLista', 'listaBancoAtividades'];
+            listIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = '';
+            });
+            const meusPlanosEl = document.getElementById('listaMeusPlanejamentos');
+            if (meusPlanosEl) meusPlanosEl.innerHTML = '<p class="text-gray-600">Faça login para ver os seus planejamentos.</p>';
+            
+            limparFormularioNovoPlanejamento(); 
+            popularDropdownsNovoPlano(); 
+            popularDropdownFiltroDisciplinaConteudo();
+        }
+
+        function showToast(message, type = "info") {
+            const toast = document.getElementById('toast-message');
+            toast.textContent = message;
+            toast.className = 'toast show'; 
+            if (type === "error") toast.classList.add('bg-red-500');
+            else if (type === "success") toast.classList.add('bg-green-500');
+            else toast.classList.add('bg-gray-700');
+            setTimeout(() => { toast.className = 'toast'; }, 3000);
+        }
+
+        function getCollectionPath(collectionName) {
+            if (!currentUserId) {
+                console.warn("currentUserId é nulo em getCollectionPath. Acesso aos dados não será possível.");
+                // showToast("Nenhum utilizador logado para aceder aos dados.", "warning"); // Evitar spam de toasts
+                throw new Error("ID do utilizador não definido para o caminho do Firestore.");
+            }
+            return `artifacts/${appId}/users/${currentUserId}/${collectionName}`;
+        }
+        
+        function loadInitialData() {
+            if (!fbDb || !currentUserId) {
+                console.log("Firestore Db ou currentUserId não disponível para loadInitialData. Os dados não serão carregados.");
+                clearAllLocalDataAndUI(); // Garante que a UI reflete que não há dados
+                return;
+            }
+            
+            unsubscribeListeners.forEach(unsub => unsub());
+            unsubscribeListeners = [];
+
+            const collectionsToLoad = [
+                { name: 'disciplinas', listId: 'disciplinasLista', itemType: 'Disciplina', localKey: 'disciplinas' },
+                { name: 'anosSeries', listId: 'anosSeriesLista', itemType: 'Ano/Série', localKey: 'anosSeries' }
+            ];
+
+            collectionsToLoad.forEach(collInfo => {
+                try {
+                    const q = query(collection(fbDb, getCollectionPath(collInfo.name)), orderBy("nome")); // Ordenar por nome
+                    unsubscribeListeners.push(onSnapshot(q, (snapshot) => {
+                        localDb[collInfo.localKey] = [];
+                        const ul = document.getElementById(collInfo.listId);
+                        if (!ul) return;
+                        ul.innerHTML = '';
+                        snapshot.forEach(doc => {
+                            const data = { id: doc.id, nome: doc.data().nome };
+                            localDb[collInfo.localKey].push(data);
+                            renderListItem(ul, data, collInfo.name, collInfo.itemType);
+                        });
+                        if (collInfo.name === 'disciplinas') {
+                             popularDropdownFiltroDisciplinaConteudo();
+                        }
+                        popularDropdownsNovoPlano();
+                    }, error => console.error(`Erro ao carregar ${collInfo.name}:`, error)));
+                } catch (e) {
+                    console.error(`Erro ao configurar listener para ${collInfo.name}: ${e.message}`);
+                }
+            });
+            
+             try {
+                const qConteudos = query(collection(fbDb, getCollectionPath('conteudos')), orderBy("nome"));
+                unsubscribeListeners.push(onSnapshot(qConteudos, (snapshot) => {
+                    localDb.conteudos = [];
+                    const ul = document.getElementById('conteudosLista');
+                    if (!ul) return;
+                    ul.innerHTML = ''; 
+                    snapshot.forEach(docSnap => {
+                        const data = { ...docSnap.data(), id: docSnap.id };
+                        localDb.conteudos.push(data);
+                        const listItem = document.createElement('li');
+                        listItem.textContent = `${data.nome} (Disciplina: ${data.disciplinaId || 'N/A'}) ${data.desc ? '- ' + data.desc : ''}`;
+                        addRemoveButton(listItem, 'conteudos', data.id, 'Conteúdo');
+                        ul.appendChild(listItem);
+                    });
+                    popularDropdownsNovoPlano();
+                }, error => console.error("Erro ao carregar conteúdos:", error)));
+            } catch(e) { console.error("Erro ao configurar listener para conteudos: ", e.message); }
+
+
+            try {
+                const qHabilidades = query(collection(fbDb, getCollectionPath('habilidades')), orderBy("codigo"));
+                unsubscribeListeners.push(onSnapshot(qHabilidades, (snapshot) => {
+                    localDb.habilidades = [];
+                    const ul = document.getElementById('habilidadesLista');
+                    if (!ul) return;
+                    ul.innerHTML = ''; 
+                    snapshot.forEach(docSnap => {
+                        const data = { ...docSnap.data(), id: docSnap.id };
+                        localDb.habilidades.push(data);
+                        const listItem = document.createElement('li');
+                        listItem.textContent = `${data.codigo}: ${data.desc}`;
+                        addRemoveButton(listItem, 'habilidades', data.id, 'Habilidade');
+                        ul.appendChild(listItem);
+                    });
+                    popularDropdownsNovoPlano();
+                }, error => console.error("Erro ao carregar habilidades:", error)));
+            } catch(e) { console.error("Erro ao configurar listener para habilidades: ", e.message); }
+            
+            try {
+                const qBancoAtividades = query(collection(fbDb, getCollectionPath('bancoAtividades')), orderBy("createdAt", "desc"));
+                unsubscribeListeners.push(onSnapshot(qBancoAtividades, (snapshot) => {
+                    localDb.bancoAtividadesGlobal = [];
+                    const listaBancoPage = document.getElementById('listaBancoAtividades');
+                    if (!listaBancoPage) return;
+                    listaBancoPage.innerHTML = '';
+
+                    snapshot.forEach(docSnap => {
+                        const atividade = { ...docSnap.data(), id: docSnap.id };
+                        localDb.bancoAtividadesGlobal.push(atividade);
+                        
+                        const div = document.createElement('div');
+                        div.classList.add('p-3', 'bg-gray-50', 'rounded-md', 'border');
+                        div.innerHTML = `
+                            <h4 class="font-semibold text-md">${atividade.titulo || 'Atividade Sem Título'} (Tipo: ${atividade.tipo || 'N/D'})</h4>
+                            <p class="text-sm text-gray-600 whitespace-pre-wrap">${atividade.descricao || 'Sem descrição'}</p>
+                            <div class="mt-2">
+                                 <button class="btn-remover-banco-atividade text-xs bg-red-100 hover:bg-red-200 text-red-600 py-1 px-2 rounded" data-id="${atividade.id}">
+                                    Remover do Banco
+                                </button>
+                            </div>`;
+                        listaBancoPage.appendChild(div);
+                    });
+                     if (snapshot.empty) {
+                        listaBancoPage.innerHTML = '<p class="text-gray-600">Nenhuma atividade no banco.</p>';
+                    }
+                }, error => console.error("Erro ao carregar banco de atividades:", error)));
+            } catch(e) { console.error("Erro ao configurar listener para banco de atividades: ", e.message); }
+
+            carregarMeusPlanejamentos(); // Carregar planejamentos também
+        }
+
+        function renderListItem(ulElement, itemData, collectionName, itemTypeForConfirm) {
+            const listItem = document.createElement('li');
+            listItem.textContent = itemData.nome;
+            addRemoveButton(listItem, collectionName, itemData.id, itemTypeForConfirm);
+            ulElement.appendChild(listItem);
+        }
+        
+        function addRemoveButton(listItemElement, collectionName, itemId, itemTypeForConfirm = "item") {
+            const removeBtn = document.createElement('button');
+            removeBtn.innerHTML = '<i class="fas fa-trash-alt text-red-500 ml-2"></i>';
+            removeBtn.classList.add('hover:text-red-700', `btn-remover-${collectionName}`); // Adiciona classe específica
+            removeBtn.dataset.id = itemId; // Guarda o ID no botão
+            removeBtn.dataset.collection = collectionName;
+            removeBtn.dataset.type = itemTypeForConfirm;
+            listItemElement.appendChild(removeBtn);
+        }
+
+        async function adicionarItemFirestore(collectionName, inputId, tipoItem) {
+            if (!fbDb || !currentUserId) { showToast("Faça login para adicionar itens.", "error"); return; }
+            const inputElement = document.getElementById(inputId);
+            const nome = inputElement.value.trim();
+            if (nome) {
+                try {
+                    await addDoc(collection(fbDb, getCollectionPath(collectionName)), { nome, createdAt: serverTimestamp() });
+                    inputElement.value = '';
+                    showToast(`${tipoItem} adicionado com sucesso!`, "success");
+                } catch (error) {
+                    console.error(`Erro ao adicionar ${tipoItem}:`, error);
+                    showToast(`Erro ao adicionar ${tipoItem}.`, "error");
+                }
+            } else {
+                alert(`Por favor, insira o nome do(a) ${tipoItem}.`);
+            }
+        }
+
+        async function adicionarConteudoFirestore() {
+            if (!fbDb || !currentUserId) { showToast("Faça login para adicionar conteúdo.", "error"); return; }
+            const nomeInput = document.getElementById('inputNovoConteudo');
+            const descInput = document.getElementById('inputDescConteudo');
+            const disciplinaSelect = document.getElementById('filtroDisciplinaConteudo');
+            const nome = nomeInput.value.trim();
+            const desc = descInput.value.trim();
+            const disciplinaId = disciplinaSelect.value; 
+
+            if (nome && disciplinaId) {
+                try {
+                    await addDoc(collection(fbDb, getCollectionPath('conteudos')), { 
+                        nome, desc, disciplinaId, createdAt: serverTimestamp() 
+                    });
+                    nomeInput.value = ''; descInput.value = '';
+                    showToast("Conteúdo adicionado com sucesso!", "success");
+                } catch (error) {
+                    console.error("Erro ao adicionar conteúdo:", error);
+                    showToast("Erro ao adicionar conteúdo.", "error");
+                }
+            } else {
+                alert('Por favor, insira o nome do conteúdo e selecione uma disciplina.');
+            }
+        }
+
+        async function adicionarHabilidadeFirestore() {
+            if (!fbDb || !currentUserId) { showToast("Faça login para adicionar habilidade.", "error"); return; }
+            const codigoInput = document.getElementById('inputCodigoHabilidade');
+            const descInput = document.getElementById('inputDescHabilidade');
+            const codigo = codigoInput.value.trim();
+            const desc = descInput.value.trim();
+
+            if (codigo && desc) {
+                 try {
+                    await addDoc(collection(fbDb, getCollectionPath('habilidades')), { 
+                        codigo, desc, createdAt: serverTimestamp() 
+                    });
+                    codigoInput.value = ''; descInput.value = '';
+                    showToast("Habilidade adicionada com sucesso!", "success");
+                } catch (error) {
+                    console.error("Erro ao adicionar habilidade:", error);
+                    showToast("Erro ao adicionar habilidade.", "error");
+                }
+            } else {
+                alert('Por favor, insira o código e a descrição da habilidade.');
+            }
+        }
+
+        async function removerItemFirestore(collectionName, itemId) {
+            if (!fbDb || !currentUserId) { showToast("Faça login para remover itens.", "error"); return; }
+            try {
+                await deleteDoc(doc(fbDb, getCollectionPath(collectionName), itemId));
+                showToast("Item removido com sucesso!", "success");
+            } catch (error) {
+                console.error("Erro ao remover item:", error);
+                showToast("Erro ao remover item.", "error");
+            }
+        }
+        
+        async function salvarPlanejamento(isRascunho = false) {
+            if (!fbDb || !currentUserId) { showToast("Faça login para guardar o planejamento.", "error"); return; }
+            const planoId = document.getElementById('currentPlanningId').value;
+            const planoData = {
+                titulo: document.getElementById('planoTitulo').value.trim() || "Planejamento Sem Título",
+                disciplina: document.getElementById('planoDisciplina').value,
+                anoSerie: document.getElementById('planoAnoSerie').value,
+                duracao: document.getElementById('planoDuracao').value,
+                objetivos: document.getElementById('planoObjetivos').value,
+                metodologia: document.getElementById('planoMetodologia').value,
+                recursos: document.getElementById('planoRecursos').value,
+                avaliacao: document.getElementById('planoAvaliacao').value,
+                isRascunho: isRascunho,
+                updatedAt: serverTimestamp(),
+                conteudosDoPlano: Array.from(document.querySelectorAll('#planoConteudosContainer > div')).map(div => {
+                    const inputManual = div.querySelector('.plano-conteudo-input-manual').value.trim();
+                    const selectEl = div.querySelector('.plano-conteudo-select');
+                    const selectedId = selectEl.value;
+                    const selectedText = selectedId ? selectEl.options[selectEl.selectedIndex].text : null;
+                    return { manual: inputManual, selectedId: selectedId, selectedText: selectedText };
+                }),
+                habilidadesSelecionadas: Array.from(document.getElementById('planoHabilidades').selectedOptions).map(opt => opt.value),
+                conteudoTeoricoDetalhado: Array.from(document.querySelectorAll('#planoConteudoTeoricoContainer > div[id^="conteudoTeorico-"]')).map(div => ({
+                    titulo: div.querySelector('h4').textContent.replace('Explicação para: ','').trim(),
+                    texto: div.querySelector('textarea').value
+                })),
+                atividadesDoPlano: Array.from(document.querySelectorAll('#planoAtividadesContainer > div')).map(div => ({
+                    titulo: div.querySelector('h5').textContent,
+                    tipoManual: div.querySelector('input[type="text"]') ? div.querySelector('input[type="text"]').value : null,
+                    descricao: div.querySelector('textarea').value
+                }))
+            };
+
+            try {
+                if (planoId) {
+                    await updateDoc(doc(fbDb, getCollectionPath('planejamentos'), planoId), planoData);
+                    showToast("Planejamento atualizado com sucesso!", "success");
+                } else { 
+                    planoData.createdAt = serverTimestamp();
+                    const docRef = await addDoc(collection(fbDb, getCollectionPath('planejamentos')), planoData);
+                    document.getElementById('currentPlanningId').value = docRef.id;
+                    showToast("Planejamento guardado com sucesso!", "success");
+                }
+            } catch (error) {
+                console.error("Erro ao guardar planejamento:", error);
+                showToast("Erro ao guardar planejamento.", "error");
+            }
+        }
+
+        function limparFormularioNovoPlanejamento() {
+            document.getElementById('currentPlanningId').value = "";
+            document.getElementById('planoTitulo').value = "";
+            document.getElementById('planoDisciplina').value = "";
+            document.getElementById('planoAnoSerie').value = "";
+            document.getElementById('planoDuracao').value = "";
+            document.getElementById('planoObjetivos').value = "";
+            document.getElementById('planoMetodologia').value = "";
+            document.getElementById('planoRecursos').value = "";
+            document.getElementById('planoAvaliacao').value = "";
+            document.getElementById('planoConteudosContainer').innerHTML = "";
+            adicionarCampoConteudoPlano(true);
+            document.getElementById('planoHabilidades').selectedIndex = -1; 
+            document.getElementById('planoConteudoTeoricoContainer').innerHTML = '<p class="text-sm text-gray-500">Clique em "Gerar Texto Explicativo com IA ✨" ao lado de cada conteúdo na Seção 2 para popular esta área.</p>';
+            document.getElementById('planoAtividadesContainer').innerHTML = "";
+        }
+
+        async function carregarMeusPlanejamentos() {
+            const listaContainer = document.getElementById('listaMeusPlanejamentos');
+            if (!fbDb || !currentUserId) { 
+                 if(listaContainer) listaContainer.innerHTML = '<p class="text-gray-600">Faça login para ver os seus planejamentos.</p>';
+                return;
+            }
+            if(listaContainer) listaContainer.innerHTML = '<p class="text-gray-500">A carregar planejamentos...</p>';
+
+            const listenerKey = 'meusPlanejamentos';
+            if (window.firestoreUnsubscribes && window.firestoreUnsubscribes[listenerKey]) {
+                window.firestoreUnsubscribes[listenerKey]();
+            }
+            if (!window.firestoreUnsubscribes) window.firestoreUnsubscribes = {};
+
+            try {
+                const q = query(collection(fbDb, getCollectionPath('planejamentos')), orderBy('updatedAt', 'desc'));
+                
+                window.firestoreUnsubscribes[listenerKey] = onSnapshot(q, (querySnapshot) => {
+                    if (!listaContainer) return;
+                    if (querySnapshot.empty) {
+                        listaContainer.innerHTML = '<p class="text-gray-600">Nenhum planejamento encontrado.</p>';
+                        return;
+                    }
+                    listaContainer.innerHTML = ''; 
+                    querySnapshot.forEach((docSnap) => {
+                        const plano = { ...docSnap.data(), id: docSnap.id };
+                        const div = document.createElement('div');
+                        div.classList.add('p-4', 'bg-white', 'rounded-lg', 'shadow', 'border', 'border-gray-200');
+                        div.innerHTML = `
+                            <h4 class="text-lg font-semibold text-blue-700">${plano.titulo} ${plano.isRascunho ? '<span class="text-xs bg-yellow-200 text-yellow-800 p-1 rounded">Rascunho</span>' : ''}</h4>
+                            <p class="text-sm text-gray-600">Disciplina: ${plano.disciplina || 'N/D'} | Ano/Série: ${plano.anoSerie || 'N/D'}</p>
+                            <p class="text-xs text-gray-500 mt-1">Última atualização: ${plano.updatedAt ? new Date(plano.updatedAt.seconds * 1000).toLocaleString('pt-BR') : 'N/D'}</p>
+                            <div class="mt-3 space-x-2">
+                                <button class="btn-editar-planejamento text-sm bg-blue-500 hover:bg-blue-600 text-white py-1 px-3 rounded" data-id="${plano.id}">Editar</button>
+                                <button class="btn-remover-planejamento text-sm bg-red-500 hover:bg-red-600 text-white py-1 px-3 rounded" data-id="${plano.id}">Remover</button>
+                            </div>`;
+                        listaContainer.appendChild(div);
+                    });
+                }, error => {
+                    console.error("Erro ao carregar meus planejamentos:", error);
+                    if(listaContainer) listaContainer.innerHTML = '<p class="text-red-500">Erro ao carregar planejamentos.</p>';
+                });
+            } catch (e) {
+                console.error("Erro ao configurar listener para meus planejamentos:", e.message);
+                if(listaContainer) listaContainer.innerHTML = '<p class="text-red-500">Erro ao carregar planejamentos.</p>';
+            }
+        }
+        
+        async function editarPlanejamento(planoId) { 
+            if (!fbDb || !currentUserId) { showToast("Faça login para editar.", "error"); return; }
+            try {
+                const docRef = doc(fbDb, getCollectionPath('planejamentos'), planoId);
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    const plano = docSnap.data();
+                    limparFormularioNovoPlanejamento(); 
+
+                    document.getElementById('currentPlanningId').value = planoId;
+                    document.getElementById('planoTitulo').value = plano.titulo || "";
+                    document.getElementById('planoDisciplina').value = plano.disciplina || "";
+                    document.getElementById('planoAnoSerie').value = plano.anoSerie || "";
+                    document.getElementById('planoDuracao').value = plano.duracao || "";
+                    document.getElementById('planoObjetivos').value = plano.objetivos || "";
+                    document.getElementById('planoMetodologia').value = plano.metodologia || "";
+                    document.getElementById('planoRecursos').value = plano.recursos || "";
+                    document.getElementById('planoAvaliacao').value = plano.avaliacao || "";
+
+                    const conteudosContainer = document.getElementById('planoConteudosContainer');
+                    conteudosContainer.innerHTML = ''; 
+                    if (plano.conteudosDoPlano && plano.conteudosDoPlano.length > 0) {
+                        plano.conteudosDoPlano.forEach(c => {
+                            adicionarCampoConteudoPlano(false, c.manual, c.selectedId);
+                        });
+                    } else {
+                        adicionarCampoConteudoPlano(true); 
+                    }
+                    
+                    const habilidadesSelect = document.getElementById('planoHabilidades');
+                    Array.from(habilidadesSelect.options).forEach(option => {
+                        option.selected = plano.habilidadesSelecionadas && plano.habilidadesSelecionadas.includes(option.value);
+                    });
+
+                    const teoricoContainer = document.getElementById('planoConteudoTeoricoContainer');
+                    teoricoContainer.innerHTML = ''; 
+                    if (plano.conteudoTeoricoDetalhado && plano.conteudoTeoricoDetalhado.length > 0) {
+                        plano.conteudoTeoricoDetalhado.forEach(item => {
+                            window.conteudoTeoricoCounter++; 
+                            const divConteudo = document.createElement('div');
+                            divConteudo.id = `conteudoTeorico-${window.conteudoTeoricoCounter}`;
+                            divConteudo.classList.add('p-3', 'bg-gray-50', 'rounded-md', 'border');
+                            divConteudo.innerHTML = `
+                                <h4 class="font-semibold text-md text-blue-700 mb-2">Explicação para: ${item.titulo}</h4>
+                                <textarea id="textTeorico-${window.conteudoTeoricoCounter}" rows="8" class="w-full p-2 border border-gray-200 rounded-md">${item.texto}</textarea>
+                                <div class="mt-2">
+                                    <button class="btn-regenerar-teorico text-xs bg-blue-100 hover:bg-blue-200 text-blue-600 py-1 px-2 rounded" data-nome-conteudo="${item.titulo}" data-textarea-id="textTeorico-${window.conteudoTeoricoCounter}">
+                                        Refazer com IA ✨ <span class="loader hidden"></span>
+                                    </button>
+                                     <button class="btn-remover-explicacao text-xs bg-red-100 hover:bg-red-200 text-red-600 py-1 px-2 rounded ml-2" data-target-id="conteudoTeorico-${window.conteudoTeoricoCounter}">
+                                        Remover Explicação
+                                    </button>
+                                </div>`;
+                            teoricoContainer.appendChild(divConteudo);
+                        });
+                    } else {
+                         teoricoContainer.innerHTML = '<p class="text-sm text-gray-500">Clique em "Gerar Texto Explicativo com IA ✨" ao lado de cada conteúdo na Seção 2 para popular esta área.</p>';
+                    }
+
+                    const atividadesContainer = document.getElementById('planoAtividadesContainer');
+                    atividadesContainer.innerHTML = ''; 
+                     if (plano.atividadesDoPlano && plano.atividadesDoPlano.length > 0) {
+                        plano.atividadesDoPlano.forEach(item => {
+                            window.atividadePlanoCounter++; 
+                            const div = document.createElement('div');
+                            div.classList.add('p-3', 'bg-gray-50', 'rounded-md', 'border', 'mb-3');
+                            div.innerHTML = `
+                                <h5 class="font-semibold text-sm text-gray-700 mb-1">${item.titulo}</h5>
+                                ${item.tipoManual !== null ? `<input type="text" value="${item.tipoManual}" placeholder="Tipo de atividade" class="w-full p-2 border border-gray-200 rounded-md mb-2">` : ''}
+                                <textarea rows="5" class="w-full p-2 border border-gray-200 rounded-md">${item.descricao}</textarea>
+                                <div class="mt-1">
+                                    <button class="btn-remover-atividade-plano text-xs bg-red-100 hover:bg-red-200 text-red-600 py-1 px-2 rounded">
+                                        Remover Atividade
+                                    </button>
+                                </div>`;
+                            atividadesContainer.appendChild(div);
+                        });
+                    }
+                    navigateTo('novoPlanejamento'); 
+                    showToast("Planejamento carregado para edição.", "info");
+                } else {
+                    showToast("Planejamento não encontrado.", "error");
+                }
+            } catch (error) {
+                console.error("Erro ao carregar planejamento para edição:", error);
+                showToast("Erro ao carregar planejamento.", "error");
+            }
+        }
+
+        async function removerPlanejamento(planoId) { 
+            if (!fbDb || !currentUserId) { showToast("Faça login para remover.", "error"); return; }
+            if (confirm("Tem a certeza que quer remover este planejamento? Esta ação não pode ser desfeita.")) {
+                try {
+                    await deleteDoc(doc(fbDb, getCollectionPath('planejamentos'), planoId));
+                    showToast("Planejamento removido com sucesso.", "success");
+                } catch (error) {
+                    console.error("Erro ao remover planejamento:", error);
+                    showToast("Erro ao remover planejamento.", "error");
+                }
+            }
+        }
+
+        const contentSections = document.querySelectorAll('.content-section');
+        const sidebarItems = document.querySelectorAll('.sidebar-item');
+
+        function navigateTo(targetId) { 
+            contentSections.forEach(section => section.classList.add('hidden'));
+            sidebarItems.forEach(item => {
+                item.classList.remove('active');
+                if(item.dataset.target === targetId || (item.parentElement.id && item.parentElement.id.toLowerCase().includes(targetId.toLowerCase()))) {
+                    if (item.dataset.target === targetId) item.classList.add('active');
+                }
+            });
+            
+            const targetSection = document.getElementById(targetId);
+            if (targetSection) {
+                targetSection.classList.remove('hidden');
+                const activeItem = document.querySelector(`.sidebar-item[data-target="${targetId}"]`);
+                if (activeItem) activeItem.classList.add('active');
+
+                if (targetId === 'novoPlanejamento') {
+                    if (!document.getElementById('currentPlanningId').value) { 
+                        limparFormularioNovoPlanejamento();
+                    }
+                    popularDropdownsNovoPlano();
+                } else if (targetId === 'conteudosProg') {
+                    popularDropdownFiltroDisciplinaConteudo();
+                } else if (targetId === 'meusPlanejamentos' && currentUserId) { // Só carrega se logado
+                    carregarMeusPlanejamentos();
+                } else if (targetId === 'bancoAtividades' && !currentUserId) {
+                     document.getElementById('listaBancoAtividades').innerHTML = '<p class="text-gray-600">Faça login para ver o banco de atividades.</p>';
+                }
+            }
+        }
+        
+        document.getElementById('toggleCurriculo').addEventListener('click', () => {
+            document.getElementById('submenuCurriculo').classList.toggle('hidden');
+        });
+        document.getElementById('togglePlanejamentos').addEventListener('click', () => {
+            document.getElementById('submenuPlanejamentos').classList.toggle('hidden');
+        });
+
+        sidebarItems.forEach(item => {
+            if (item.dataset.target) {
+                item.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    navigateTo(item.dataset.target);
+                });
+            }
+        });
+        document.querySelectorAll('.nav-button').forEach(button => {
+            button.addEventListener('click', () => navigateTo(button.dataset.targetNav));
+        });
+        
+        function popularDropdown(selectId, items, placeholder, useObjectValue = false, valueField = 'id', textField = 'nome') {
+            const select = document.getElementById(selectId);
+            if (!select) return;
+            const currentValue = select.value; 
+            select.innerHTML = ''; 
+            if (placeholder) {
+                const phOption = document.createElement('option');
+                phOption.value = "";
+                phOption.textContent = placeholder;
+                phOption.disabled = true;
+                select.appendChild(phOption);
+            }
+            items.forEach(item => {
+                const option = document.createElement('option');
+                if (useObjectValue && typeof item === 'object' && item !== null) {
+                    option.value = item[valueField];
+                    option.textContent = item[textField];
+                } else if (typeof item === 'object' && item !== null && item.nome) { 
+                    option.value = item.id; 
+                    option.textContent = item.nome;
+                }
+                else { 
+                    option.value = item;
+                    option.textContent = item;
+                }
+                select.appendChild(option);
+            });
+            select.value = currentValue; 
+            if (!select.value && placeholder && select.options.length > 0) select.selectedIndex = 0; 
+        }
+
+        function popularDropdownFiltroDisciplinaConteudo() {
+            popularDropdown('filtroDisciplinaConteudo', localDb.disciplinas, 'Selecione uma disciplina', true, 'nome', 'nome');
+        }
+        
+        function popularDropdownsNovoPlano() {
+            popularDropdown('planoDisciplina', localDb.disciplinas, 'Selecione a disciplina', true, 'nome', 'nome');
+            popularDropdown('planoAnoSerie', localDb.anosSeries, 'Selecione o ano/série', true, 'nome', 'nome');
+            popularDropdown('planoHabilidades', localDb.habilidades.map(h => ({id: h.id, nome: `${h.codigo} - ${h.desc.substring(0,50)}...`})), '', true, 'id', 'nome');
+            
+            const conteudosDropdowns = document.querySelectorAll('.plano-conteudo-select');
+            conteudosDropdowns.forEach(dropdown => {
+                popularDropdown(dropdown.id, localDb.conteudos, 'Selecione um conteúdo cadastrado', true, 'id', 'nome');
+            });
+
+            const modalConteudoSelect = document.getElementById('modalAtividadeConteudo');
+            if(modalConteudoSelect) {
+                modalConteudoSelect.innerHTML = ''; 
+                const conteudosInputs = document.querySelectorAll('#planoConteudosContainer .plano-conteudo-input-manual, #planoConteudosContainer .plano-conteudo-select');
+                let conteudosDoPlano = [];
+                conteudosInputs.forEach(input => {
+                    let val;
+                    if (input.tagName.toLowerCase() === 'select') {
+                        const selectedOption = input.options[input.selectedIndex];
+                        if (selectedOption && selectedOption.value) {
+                            const foundConteudo = localDb.conteudos.find(c => c.id === selectedOption.value);
+                            val = foundConteudo ? foundConteudo.nome : selectedOption.text;
+                        }
+                    } else {
+                        val = input.value.trim();
+                    }
+                    if (val && !conteudosDoPlano.includes(val)) {
+                        conteudosDoPlano.push(val);
+                    }
+                });
+                conteudosDoPlano.forEach(nomeConteudo => {
+                    const option = document.createElement('option');
+                    option.value = nomeConteudo;
+                    option.textContent = nomeConteudo;
+                    modalConteudoSelect.appendChild(option);
+                });
+            }
+        }
+
+        let conteudoPlanoCounter = 0;
+        function adicionarCampoConteudoPlano(isInitial = false, manualValue = "", selectedValueId = "") { 
+            conteudoPlanoCounter++;
+            const container = document.getElementById('planoConteudosContainer');
+            
+            const div = document.createElement('div');
+            div.classList.add('flex', 'items-center', 'space-x-2', 'mb-2');
+            div.innerHTML = `
+                <input type="text" class="plano-conteudo-input-manual mt-1 block w-2/5 p-2 border border-gray-300 rounded-md shadow-sm" value="${manualValue}" placeholder="Ou digite um novo conteúdo aqui">
+                <span class="text-gray-500">OU</span>
+                <select id="planoConteudoSelect${conteudoPlanoCounter}" class="plano-conteudo-select mt-1 block w-2/5 p-2 border border-gray-300 rounded-md shadow-sm">
+                </select>
+                <button type="button" class="btn-gerar-teorico-conteudo text-sm bg-blue-100 hover:bg-blue-200 text-blue-700 font-semibold py-1 px-2 rounded" title="Gerar Texto Explicativo com IA">
+                    IA ✨ <span class="loader hidden"></span>
+                </button>
+                ${!isInitial ? '<button type="button" class="btn-remover-campo-conteudo text-red-500 hover:text-red-700"><i class="fas fa-trash-alt"></i></button>' : ''}
+            `;
+            container.appendChild(div);
+            popularDropdown(`planoConteudoSelect${conteudoPlanoCounter}`, localDb.conteudos, 'Selecione um conteúdo', true, 'id', 'nome');
+            if (selectedValueId) {
+                document.getElementById(`planoConteudoSelect${conteudoPlanoCounter}`).value = selectedValueId;
+            }
+            popularDropdownsNovoPlano(); 
+        }
+
+        const GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=";
+        async function callGeminiAPI(prompt) {
+            const userApiKey = document.getElementById('apiKeyInput') ? document.getElementById('apiKeyInput').value.trim() : "";
+            // Tenta obter do ambiente __env (que não existirá localmente) ou usa a chave do utilizador.
+            const apiKey = userApiKey || (typeof __env !== 'undefined' && __env.GEMINI_API_KEY ? __env.GEMINI_API_KEY : ""); 
+
+            if (!apiKey) {
+                console.warn("Nenhuma chave de API Gemini fornecida. Usando resposta de exemplo.");
+                showToast("Chave da API Gemini não configurada. Usando exemplo.", "warning");
+                 return `Texto de exemplo gerado pela IA para o prompt: "${prompt.substring(0,100)}..." (Sem API Key).`;
+            }
+            
+            const apiUrl = `${GEMINI_API_BASE_URL}${apiKey}`;
+            const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error("Erro da API Gemini:", errorData);
+                    throw new Error(`Erro da API: ${errorData.error?.message || response.statusText}`);
+                }
+                const result = await response.json();
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    return result.candidates[0].content.parts[0].text;
+                } else {
+                    console.error("Resposta inesperada da API Gemini:", result);
+                    throw new Error("Resposta da API não contém o texto esperado.");
+                }
+            } catch (error) {
+                console.error("Falha ao chamar a API Gemini:", error);
+                showToast(`Erro ao gerar com IA: ${error.message}.`, "error");
+                return `Erro ao gerar texto com IA: ${error.message}. Verifique a consola para mais detalhes.`;
+            }
+        }
+
+        function getConteudoDoPlanoParaIA() {
+            let conteudosText = [];
+            document.querySelectorAll('#planoConteudosContainer > div').forEach(div => {
+                const inputManual = div.querySelector('.plano-conteudo-input-manual').value.trim();
+                const selectEl = div.querySelector('.plano-conteudo-select');
+                const selectedId = selectEl.value;
+                
+                if (inputManual) {
+                    conteudosText.push(inputManual);
+                } else if (selectedId) {
+                    const conteudoObj = localDb.conteudos.find(c => c.id === selectedId);
+                    if (conteudoObj) conteudosText.push(conteudoObj.nome);
+                }
+            });
+            return conteudosText.filter((v, i, a) => a.indexOf(v) === i).join(', ');
+        }
+        
+        function gerarTextoIA(textareaId, tipoDeTexto, loaderId) { 
+            const textarea = document.getElementById(textareaId);
+            const loader = document.getElementById(loaderId);
+            if(loader) loader.classList.remove('hidden');
+
+            const tituloPlano = document.getElementById('planoTitulo').value.trim();
+            const disciplinaPlano = document.getElementById('planoDisciplina').value;
+            const anoSeriePlano = document.getElementById('planoAnoSerie').value;
+            const conteudosDoPlano = getConteudoDoPlanoParaIA();
+            
+            let prompt = `Aja como um assistente especialista em educação. `;
+            prompt += `Para um plano de aula com o título "${tituloPlano || 'Não especificado'}", para a disciplina de "${disciplinaPlano || 'Não especificada'}" e ano/série "${anoSeriePlano || 'Não especificado'}", `;
+            if (conteudosDoPlano) {
+                prompt += `abordando os seguintes conteúdos: "${conteudosDoPlano}". `;
+            } else {
+                prompt += `sem conteúdos específicos detalhados ainda. `;
+            }
+            prompt += `Por favor, gere ${tipoDeTexto}. Seja claro, conciso e adequado ao contexto educacional.`;
+            if (textareaId === 'planoObjetivos' && textarea.value.trim()) {
+                 prompt += ` Considere os seguintes objetivos já existentes e, se necessário, refine-os ou adicione mais: "${textarea.value.trim()}".`;
+            }
+            callGeminiAPI(prompt).then(textoGerado => { // Adicionado .then()
+                textarea.value = textoGerado;
+                if(loader) loader.classList.add('hidden');
+            });
+        }
+
+        function sugerirConteudosIA() { 
+            const loader = document.getElementById('loaderConteudos');
+            if(loader) loader.classList.remove('hidden');
+            const tituloPlano = document.getElementById('planoTitulo').value.trim();
+            const disciplinaPlano = document.getElementById('planoDisciplina').value;
+            const anoSeriePlano = document.getElementById('planoAnoSerie').value;
+            const objetivosPlano = document.getElementById('planoObjetivos').value.trim();
+            let prompt = `Aja como um especialista em currículo educacional. `;
+            prompt += `Para um plano de aula com o título "${tituloPlano || 'Ainda não definido'}"`;
+            if (disciplinaPlano) prompt += `, para a disciplina de "${disciplinaPlano}"`;
+            if (anoSeriePlano) prompt += `, para o ano/série "${anoSeriePlano}"`;
+            if (objetivosPlano) prompt += `, e com os seguintes objetivos de aprendizagem: "${objetivosPlano}"`;
+            prompt += `. Sugira uma lista de 3 a 5 conteúdos principais que deveriam ser abordados. Formate a resposta como uma lista simples, cada item numa nova linha, sem marcadores (ex: apenas o nome do conteúdo).`;
+            
+            callGeminiAPI(prompt).then(sugestoes => { // Adicionado .then()
+                if(loader) loader.classList.add('hidden');
+                const sugestoesArray = sugestoes.split('\n').filter(s => s.trim() !== '');
+                sugestoesArray.forEach(sugestao => {
+                    adicionarCampoConteudoPlano(false, sugestao.trim(), "");
+                });
+                popularDropdownsNovoPlano();
+            });
+        }
+
+        window.conteudoTeoricoCounter = 0; 
+        function gerarConteudoTeoricoIA(conteudoDiv) { 
+            const inputManual = conteudoDiv.querySelector('.plano-conteudo-input-manual');
+            const selectConteudo = conteudoDiv.querySelector('.plano-conteudo-select');
+            const loader = conteudoDiv.querySelector('.loader');
+            if(loader) loader.classList.remove('hidden');
+            let nomeConteudo = inputManual.value.trim();
+            if (!nomeConteudo && selectConteudo.value) {
+                const conteudoSelecionado = localDb.conteudos.find(c => c.id === selectConteudo.value);
+                if (conteudoSelecionado) nomeConteudo = conteudoSelecionado.nome;
+            }
+            if (!nomeConteudo) {
+                alert("Por favor, selecione ou digite um conteúdo.");
+                if(loader) loader.classList.add('hidden'); return;
+            }
+            const tituloPlano = document.getElementById('planoTitulo').value.trim();
+            const disciplinaPlano = document.getElementById('planoDisciplina').value;
+            const anoSeriePlano = document.getElementById('planoAnoSerie').value;
+            const prompt = `Aja como um professor experiente. Para o conteúdo "${nomeConteudo}" dentro de um plano de aula sobre "${tituloPlano || 'tópico geral'}" (disciplina: ${disciplinaPlano || 'não especificada'}, ano/série: ${anoSeriePlano || 'não especificado'}), gere um texto explicativo detalhado e claro, adequado para alunos. Inclua conceitos chave, exemplos se aplicável, e divida em parágrafos para melhor leitura. Não inclua um título para esta explicação, apenas o texto em si.`;
+            
+            callGeminiAPI(prompt).then(textoGerado => { // Adicionado .then()
+                if(loader) loader.classList.add('hidden');
+                const containerTeorico = document.getElementById('planoConteudoTeoricoContainer');
+                const placeholder = containerTeorico.querySelector('p.text-gray-500');
+                if (placeholder) placeholder.remove();
+                window.conteudoTeoricoCounter++;
+                const divConteudo = document.createElement('div');
+                divConteudo.id = `conteudoTeorico-${window.conteudoTeoricoCounter}`;
+                divConteudo.classList.add('p-3', 'bg-gray-50', 'rounded-md', 'border');
+                divConteudo.innerHTML = `
+                    <h4 class="font-semibold text-md text-blue-700 mb-2">Explicação para: ${nomeConteudo}</h4>
+                    <textarea id="textTeorico-${window.conteudoTeoricoCounter}" rows="8" class="w-full p-2 border border-gray-200 rounded-md">${textoGerado}</textarea>
+                    <div class="mt-2">
+                        <button class="btn-regenerar-teorico text-xs bg-blue-100 hover:bg-blue-200 text-blue-600 py-1 px-2 rounded" data-nome-conteudo="${nomeConteudo}" data-textarea-id="textTeorico-${window.conteudoTeoricoCounter}">
+                            Refazer com IA ✨ <span class="loader hidden"></span>
+                        </button>
+                         <button class="btn-remover-explicacao text-xs bg-red-100 hover:bg-red-200 text-red-600 py-1 px-2 rounded ml-2" data-target-id="conteudoTeorico-${window.conteudoTeoricoCounter}">
+                            Remover Explicação
+                        </button>
+                    </div>`;
+                containerTeorico.appendChild(divConteudo);
+            });
+        }
+        
+        function regenerarConteudoTeoricoIA(nomeConteudo, textareaId, loaderElement) { 
+            if(loaderElement) loaderElement.classList.remove('hidden');
+            const textarea = document.getElementById(textareaId);
+            const tituloPlano = document.getElementById('planoTitulo').value.trim();
+            const disciplinaPlano = document.getElementById('planoDisciplina').value;
+            const anoSeriePlano = document.getElementById('planoAnoSerie').value;
+            const prompt = `Aja como um professor experiente. Para o conteúdo "${nomeConteudo}" dentro de um plano de aula sobre "${tituloPlano || 'tópico geral'}" (disciplina: ${disciplinaPlano || 'não especificada'}, ano/série: ${anoSeriePlano || 'não especificado'}), gere NOVAMENTE um texto explicativo detalhado e claro, adequado para alunos. Tente uma abordagem ou exemplos diferentes da vez anterior. Inclua conceitos chave e divida em parágrafos. Não inclua um título para esta explicação, apenas o texto em si.`;
+            
+            callGeminiAPI(prompt).then(textoGerado => { // Adicionado .then()
+                textarea.value = textoGerado;
+                if(loaderElement) loaderElement.classList.add('hidden');
+            });
+        }
+
+        const modalAtividades = document.getElementById('modalGerarAtividades');
+        function abrirModalGerarAtividades() { 
+            popularDropdownsNovoPlano(); 
+            modalAtividades.style.display = 'block';
+        }
+        function fecharModalGerarAtividades() { 
+            modalAtividades.style.display = 'none';
+        }
+        
+        window.atividadePlanoCounter = 0; 
+        function processarGeracaoAtividadesIA() { 
+            const loader = document.getElementById('loaderModalAtividades');
+            if (loader) loader.classList.remove('hidden');
+            const selectedConteudosElements = document.getElementById('modalAtividadeConteudo').selectedOptions;
+            const tipoAtividade = document.getElementById('modalTipoAtividade').value;
+            const numAtividades = document.getElementById('modalNumAtividades').value;
+            const nivelDificuldade = document.getElementById('modalNivelDificuldade').value;
+            const instrucoesAdicionais = document.getElementById('modalInstrucoesAdicionais').value.trim();
+            const guardarNoBanco = document.getElementById('modalGuardarNoBanco').checked;
+
+            let conteudosSelecionados = [];
+            for (let option of selectedConteudosElements) { conteudosSelecionados.push(option.value); }
+            const conteudosTexto = conteudosSelecionados.join(', ');
+
+            if (conteudosSelecionados.length === 0) {
+                alert("Selecione pelo menos um conteúdo para gerar atividades.");
+                if (loader) loader.classList.add('hidden'); return;
+            }
+            const tituloPlano = document.getElementById('planoTitulo').value.trim();
+            const disciplinaPlano = document.getElementById('planoDisciplina').value;
+            const anoSeriePlano = document.getElementById('planoAnoSerie').value;
+            const objetivosPlano = document.getElementById('planoObjetivos').value.trim();
+            let prompt = `Aja como um criador de atividades pedagógicas. `;
+            prompt += `Para um plano de aula com título "${tituloPlano || 'Não especificado'}", disciplina "${disciplinaPlano || 'Não especificada'}", ano/série "${anoSeriePlano || 'Não especificado'}", `;
+            prompt += `e focado nos seguintes conteúdos: "${conteudosTexto}". `;
+            if(objetivosPlano) prompt += `Os objetivos de aprendizagem são: "${objetivosPlano}". `;
+            prompt += `Gere ${numAtividades} atividade(s) do tipo "${formatarTipoAtividadeParaPrompt(tipoAtividade)}" com nível de dificuldade "${nivelDificuldade}". `;
+            if(instrucoesAdicionais) prompt += `Considere também as seguintes instruções: "${instrucoesAdicionais}". `;
+            prompt += `Formate cada atividade claramente. Se for múltipla escolha, inclua 4 alternativas (A, B, C, D) e indique a correta com "(GABARITO)". Se for V/F, peça justificação para as falsas e indique o gabarito. Para dissertativas, apenas a pergunta. Para práticas/projetos, uma breve descrição da proposta.`;
+            prompt += `\n\nExemplo de formatação para Múltipla Escolha:\n1. Pergunta?\nA) Opção 1\nB) Opção 2\nC) Opção 3 (GABARITO)\nD) Opção 4\n\n`;
+            prompt += `Exemplo de formatação para Dissertativa:\n1. Pergunta dissertativa?\n\n`;
+            prompt += `Separe cada atividade com "--- NOVA ATIVIDADE ---".`;
+
+            callGeminiAPI(prompt).then(atividadesGeradasTexto => { // Adicionado .then()
+                if (loader) loader.classList.add('hidden');
+                const atividadesIndividuais = atividadesGeradasTexto.split("--- NOVA ATIVIDADE ---");
+                const containerAtividadesPlano = document.getElementById('planoAtividadesContainer');
+
+                for (const atividadeTexto of atividadesIndividuais) {
+                    if (atividadeTexto.trim() === "") continue;
+                    window.atividadePlanoCounter++;
+                    const atividadeLimpa = atividadeTexto.trim();
+                    
+                    const divPlano = document.createElement('div');
+                    divPlano.classList.add('p-3', 'bg-gray-50', 'rounded-md', 'border', 'mb-3');
+                    divPlano.innerHTML = `
+                        <h5 class="font-semibold text-sm text-green-700 mb-1">Atividade Gerada ${window.atividadePlanoCounter} (Tipo: ${tipoAtividade.replace("_", " ")}, Nível: ${nivelDificuldade})</h5>
+                        <textarea rows="6" class="w-full p-2 border border-gray-200 rounded-md">${atividadeLimpa}</textarea>
+                        <div class="mt-1">
+                            <button class="btn-remover-atividade-plano text-xs bg-red-100 hover:bg-red-200 text-red-600 py-1 px-2 rounded">
+                                Remover Atividade
+                            </button>
+                        </div>`;
+                    containerAtividadesPlano.appendChild(divPlano);
+
+                    if (guardarNoBanco && fbDb && currentUserId) {
+                        addDoc(collection(fbDb, getCollectionPath('bancoAtividades')), {
+                            titulo: `Atividade Gerada ${window.atividadePlanoCounter} (${tipoAtividade})`,
+                            tipo: tipoAtividade,
+                            nivel: nivelDificuldade,
+                            descricao: atividadeLimpa,
+                            conteudosRelacionados: conteudosSelecionados, 
+                            createdAt: serverTimestamp()
+                        }).then(() => showToast("Atividade guardada no banco!", "success"))
+                          .catch(error => {
+                            console.error("Erro ao guardar atividade no banco:", error);
+                            showToast("Erro ao guardar atividade no banco.", "error");
+                          });
+                    }
+                }
+                fecharModalGerarAtividades();
+            });
+        }
+        
+        function formatarTipoAtividadeParaPrompt(tipo) {
+            switch(tipo) {
+                case 'multipla_escolha': return 'Múltipla Escolha com 4 alternativas e gabarito';
+                case 'dissertativa': return 'Dissertativa';
+                case 'verdadeiro_falso': return 'Verdadeiro ou Falso com indicação de gabarito e espaço para justificação das falsas';
+                case 'pratica': return 'Prática ou um mini-projeto';
+                case 'estudo_caso': return 'Estudo de Caso curto com perguntas para análise';
+                default: return tipo;
+            }
+        }
+        
+        function adicionarAtividadeManualPlano() { 
+            const containerAtividades = document.getElementById('planoAtividadesContainer');
+            window.atividadePlanoCounter++;
+            const div = document.createElement('div');
+            div.classList.add('p-3', 'bg-gray-50', 'rounded-md', 'border', 'mb-3');
+            div.innerHTML = `
+                <h5 class="font-semibold text-sm text-gray-700 mb-1">Atividade Manual ${window.atividadePlanoCounter}</h5>
+                <input type="text" placeholder="Tipo de atividade (Ex: Múltipla Escolha, Debate)" class="w-full p-2 border border-gray-200 rounded-md mb-2">
+                <textarea rows="5" class="w-full p-2 border border-gray-200 rounded-md" placeholder="Descreva a atividade aqui..."></textarea>
+                <div class="mt-1">
+                    <button class="btn-remover-atividade-plano text-xs bg-red-100 hover:bg-red-200 text-red-600 py-1 px-2 rounded">
+                        Remover Atividade
+                    </button>
+                </div>`;
+            containerAtividades.appendChild(div);
+        }
+
+        const modalBancoParaPlano = document.getElementById('modalBancoParaPlano');
+        function abrirModalBancoAtividades() {
+            const container = document.getElementById('conteudoModalBancoAtividades');
+            container.innerHTML = ''; 
+            if (localDb.bancoAtividadesGlobal.length === 0) {
+                container.innerHTML = '<p>Nenhuma atividade no banco.</p>';
+            } else {
+                localDb.bancoAtividadesGlobal.forEach(atividade => {
+                    const div = document.createElement('div');
+                    div.classList.add('p-3', 'mb-2', 'border', 'rounded-md', 'hover:bg-gray-100');
+                    div.innerHTML = `
+                        <h5 class="font-semibold">${atividade.titulo || 'Atividade'} (Tipo: ${atividade.tipo})</h5>
+                        <p class="text-sm whitespace-pre-wrap">${atividade.descricao.substring(0,150)}...</p>
+                        <button class="btn-add-banco-para-plano mt-2 text-xs bg-blue-500 hover:bg-blue-600 text-white py-1 px-2 rounded" data-id="${atividade.id}">Adicionar ao Plano</button>
+                    `;
+                    container.appendChild(div);
+                });
+            }
+            modalBancoParaPlano.style.display = 'block';
+        }
+        function fecharModalBancoParaPlano() {
+            modalBancoParaPlano.style.display = 'none';
+        }
+        function adicionarAtividadeDoBancoAoPlano(atividadeId) {
+            const atividade = localDb.bancoAtividadesGlobal.find(a => a.id === atividadeId);
+            if (atividade) {
+                const containerAtividadesPlano = document.getElementById('planoAtividadesContainer');
+                window.atividadePlanoCounter++;
+                const div = document.createElement('div');
+                div.classList.add('p-3', 'bg-gray-50', 'rounded-md', 'border', 'mb-3');
+                div.innerHTML = `
+                    <h5 class="font-semibold text-sm text-purple-700 mb-1">Do Banco: ${atividade.titulo || `Atividade ${window.atividadePlanoCounter}`} (Tipo: ${atividade.tipo})</h5>
+                    <textarea rows="6" class="w-full p-2 border border-gray-200 rounded-md">${atividade.descricao}</textarea>
+                    <div class="mt-1">
+                        <button class="btn-remover-atividade-plano text-xs bg-red-100 hover:bg-red-200 text-red-600 py-1 px-2 rounded">
+                            Remover Atividade
+                        </button>
+                    </div>`;
+                containerAtividadesPlano.appendChild(div);
+                showToast("Atividade adicionada do banco!", "success");
+                fecharModalBancoParaPlano();
+            }
+        }
+        
+        function exportarPlanoParaTexto() { 
+            let textoCompleto = "PLANO DE AULA\n============================\n\n";
+            textoCompleto += "1. IDENTIFICAÇÃO\n";
+            textoCompleto += `Título: ${document.getElementById('planoTitulo').value || 'Não preenchido'}\n`;
+            textoCompleto += `Disciplina: ${document.getElementById('planoDisciplina').value || 'Não preenchido'}\n`;
+            textoCompleto += `Ano/Série: ${document.getElementById('planoAnoSerie').value || 'Não preenchido'}\n`;
+            textoCompleto += `Duração: ${document.getElementById('planoDuracao').value || 'Não preenchido'}\n\n`;
+            textoCompleto += "2. CONTEÚDOS E OBJETIVOS\n";
+            textoCompleto += "Conteúdos a Serem Trabalhados:\n";
+            const conteudosPlano = getConteudoDoPlanoParaIA();
+            textoCompleto += conteudosPlano ? conteudosPlano.split(', ').map(c => `- ${c}`).join('\n') + '\n' : "Nenhum conteúdo especificado.\n";
+            textoCompleto += "\nObjetivos de Aprendizagem:\n";
+            textoCompleto += `${document.getElementById('planoObjetivos').value || 'Não preenchido'}\n\n`;
+            textoCompleto += "Habilidades (BNCC):\n";
+            const habilidadesSelect = document.getElementById('planoHabilidades');
+            let habilidadesTexto = "";
+            for (const option of habilidadesSelect.selectedOptions) {
+                const hab = localDb.habilidades.find(h => h.id === option.value); 
+                if (hab) habilidadesTexto += `- ${hab.codigo}: ${hab.desc}\n`;
+            }
+            textoCompleto += habilidadesTexto || "Nenhuma habilidade selecionada.\n";
+            textoCompleto += "\n";
+            textoCompleto += "3. METODOLOGIA / DESENVOLVIMENTO DA AULA\n";
+            textoCompleto += `${document.getElementById('planoMetodologia').value || 'Não preenchido'}\n\n`;
+            textoCompleto += "4. CONTEÚDO TEÓRICO DETALHADO\n";
+            const conteudosTeoricos = document.querySelectorAll('#planoConteudoTeoricoContainer > div[id^="conteudoTeorico-"]');
+            if (conteudosTeoricos.length > 0 && !document.querySelector('#planoConteudoTeoricoContainer p.text-gray-500')) {
+                conteudosTeoricos.forEach(div => {
+                    const tituloConteudo = div.querySelector('h4').textContent.replace('Explicação para: ','');
+                    const textoConteudo = div.querySelector('textarea').value;
+                    textoCompleto += `Tópico: ${tituloConteudo}\n${textoConteudo}\n\n`;
+                });
+            } else {
+                textoCompleto += "Nenhum conteúdo teórico detalhado gerado.\n\n";
+            }
+            textoCompleto += "5. ATIVIDADES\n";
+            const atividadesPlano = document.querySelectorAll('#planoAtividadesContainer > div');
+            if (atividadesPlano.length > 0) {
+                atividadesPlano.forEach(div => {
+                    const tituloAtividade = div.querySelector('h5').textContent;
+                    const tipoManual = div.querySelector('input[type="text"]');
+                    const textoAtividade = div.querySelector('textarea').value;
+                    textoCompleto += `(${tituloAtividade}${tipoManual ? ' - ' + tipoManual.value : ''})\n${textoAtividade}\n\n---\n\n`;
+                });
+            } else {
+                textoCompleto += "Nenhuma atividade adicionada.\n\n";
+            }
+            textoCompleto += "6. RECURSOS E MATERIAIS\n";
+            textoCompleto += `${document.getElementById('planoRecursos').value || 'Não preenchido'}\n\n`;
+            textoCompleto += "7. AVALIAÇÃO\n";
+            textoCompleto += `${document.getElementById('planoAvaliacao').value || 'Não preenchido'}\n\n`;
+            const blob = new Blob([textoCompleto], { type: 'text/plain;charset=utf-8' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `plano_de_aula_${(document.getElementById('planoTitulo').value.trim().replace(/\s+/g, '_') || 'exportado')}.txt`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(link.href);
+        }
+        
+        // --- Event Listeners para botões (delegação de eventos) ---
+        document.addEventListener('click', function(event) {
+            // Botões de remover itens de listas
+            if (event.target.closest('.btn-remover-disciplinas')) {
+                const btn = event.target.closest('.btn-remover-disciplinas');
+                if (confirm(`Tem a certeza que quer remover esta Disciplina?`)) removerItemFirestore(btn.dataset.collection, btn.dataset.id);
+            }
+            if (event.target.closest('.btn-remover-anosSeries')) {
+                 const btn = event.target.closest('.btn-remover-anosSeries');
+                if (confirm(`Tem a certeza que quer remover este Ano/Série?`)) removerItemFirestore(btn.dataset.collection, btn.dataset.id);
+            }
+            if (event.target.closest('.btn-remover-conteudos')) {
+                 const btn = event.target.closest('.btn-remover-conteudos');
+                if (confirm(`Tem a certeza que quer remover este Conteúdo?`)) removerItemFirestore(btn.dataset.collection, btn.dataset.id);
+            }
+             if (event.target.closest('.btn-remover-habilidades')) {
+                 const btn = event.target.closest('.btn-remover-habilidades');
+                if (confirm(`Tem a certeza que quer remover esta Habilidade?`)) removerItemFirestore(btn.dataset.collection, btn.dataset.id);
+            }
+            if (event.target.closest('.btn-remover-banco-atividade')) {
+                const btn = event.target.closest('.btn-remover-banco-atividade');
+                if (confirm(`Tem a certeza que quer remover esta atividade do banco?`)) removerItemFirestore('bancoAtividades', btn.dataset.id);
+            }
+
+            // Botões em "Meus Planejamentos"
+            if (event.target.closest('.btn-editar-planejamento')) {
+                editarPlanejamento(event.target.closest('.btn-editar-planejamento').dataset.id);
+            }
+            if (event.target.closest('.btn-remover-planejamento')) {
+                removerPlanejamento(event.target.closest('.btn-remover-planejamento').dataset.id);
+            }
+            // Botões em "Novo Planejamento" - Seção Conteúdos do Plano
+            if (event.target.closest('.btn-gerar-teorico-conteudo')) {
+                gerarConteudoTeoricoIA(event.target.closest('.flex'));
+            }
+            if (event.target.closest('.btn-remover-campo-conteudo')) {
+                event.target.closest('.flex').remove();
+                popularDropdownsNovoPlano(); // Atualizar modal de atividades
+            }
+            // Botões em "Novo Planejamento" - Seção Conteúdo Teórico Detalhado
+             if (event.target.closest('.btn-regenerar-teorico')) {
+                const btn = event.target.closest('.btn-regenerar-teorico');
+                regenerarConteudoTeoricoIA(btn.dataset.nomeConteudo, btn.dataset.textareaId, btn.querySelector('.loader'));
+            }
+            if (event.target.closest('.btn-remover-explicacao')) {
+                const targetId = event.target.closest('.btn-remover-explicacao').dataset.targetId;
+                document.getElementById(targetId)?.remove();
+            }
+            // Botões em "Novo Planejamento" - Seção Atividades
+            if (event.target.closest('.btn-remover-atividade-plano')) {
+                event.target.closest('.p-3.bg-gray-50').remove();
+            }
+            // Botões do Modal "Usar do Banco"
+            if (event.target.closest('.btn-add-banco-para-plano')) {
+                adicionarAtividadeDoBancoAoPlano(event.target.closest('.btn-add-banco-para-plano').dataset.id);
+            }
+        });
+        
+        // Adicionar event listeners diretos para botões que não são gerados dinamicamente em listas
+        document.getElementById('loginGoogleBtn').addEventListener('click', signInWithGoogle);
+        document.getElementById('logoutBtn').addEventListener('click', signOutUser);
+        
+        document.getElementById('btnAdicionarDisciplina').addEventListener('click', () => adicionarItemFirestore('disciplinas', 'inputNovaDisciplina', 'Disciplina'));
+        document.getElementById('btnAdicionarAnoSerie').addEventListener('click', () => adicionarItemFirestore('anosSeries', 'inputNovoAnoSerie', 'Ano/Série'));
+        document.getElementById('btnAdicionarConteudo').addEventListener('click', adicionarConteudoFirestore);
+        document.getElementById('btnAdicionarHabilidade').addEventListener('click', adicionarHabilidadeFirestore);
+        
+        document.getElementById('btnAdicionarCampoConteudoPlano').addEventListener('click', () => adicionarCampoConteudoPlano());
+        document.getElementById('btnSugerirConteudosIA').addEventListener('click', sugerirConteudosIA);
+        document.getElementById('btnSugerirObjetivosIA').addEventListener('click', () => gerarTextoIA('planoObjetivos', 'objetivos de aprendizagem concisos e claros para os conteúdos e o título do plano informados', 'loaderObjetivos'));
+        document.getElementById('btnSugerirMetodologiaIA').addEventListener('click', () => gerarTextoIA('planoMetodologia', 'uma estrutura de metodologia e desenvolvimento para uma aula com os conteúdos e objetivos informados, incluindo introdução, desenvolvimento e conclusão', 'loaderMetodologia'));
+        document.getElementById('btnSugerirRecursosIA').addEventListener('click', () => gerarTextoIA('planoRecursos', 'sugestões de recursos e materiais (livros, vídeos, sites) relevantes para os conteúdos e objetivos informados', 'loaderRecursos'));
+        document.getElementById('btnSugerirAvaliacaoIA').addEventListener('click', () => gerarTextoIA('planoAvaliacao', 'sugestões de métodos de avaliação para os conteúdos e objetivos informados', 'loaderAvaliacao'));
+        
+        document.getElementById('btnAbrirModalGerarAtividades').addEventListener('click', abrirModalGerarAtividades);
+        document.getElementById('btnAdicionarAtividadeManualPlano').addEventListener('click', adicionarAtividadeManualPlano);
+        document.getElementById('btnAbrirModalBancoAtividades').addEventListener('click', abrirModalBancoAtividades);
+
+        document.getElementById('btnSalvarRascunho').addEventListener('click', () => salvarPlanejamento(true));
+        document.getElementById('btnSalvarPlanejamento').addEventListener('click', () => salvarPlanejamento(false));
+        document.getElementById('btnExportarTexto').addEventListener('click', exportarPlanoParaTexto);
+
+        document.getElementById('closeModalGerarAtividades').addEventListener('click', fecharModalGerarAtividades);
+        document.getElementById('btnProcessarGeracaoAtividadesIA').addEventListener('click', processarGeracaoAtividadesIA);
+        document.getElementById('closeModalBancoParaPlano').addEventListener('click', fecharModalBancoParaPlano);
+
+
+        // Fechar modais ao clicar fora
+        window.addEventListener('click', function(event) {
+            if (event.target == modalAtividades) fecharModalGerarAtividades();
+            if (event.target == modalBancoParaPlano) fecharModalBancoParaPlano();
+        });
+
+        // Inicializar Firebase ao carregar a página
+        initFirebase();
+        navigateTo('dashboard'); 
+    </script>
+</body>
+</html>
